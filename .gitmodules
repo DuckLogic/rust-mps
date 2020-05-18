@@ -1,0 +1,6 @@
+[submodule "mps-sys/mps"]
+	path = mps-sys/mps
+	url = https://github.com/Ravenbrook/mps.git
+[submodule "zerogc"]
+	path = zerogc
+	url = https://github.com/DuckLogic/zerogc.git

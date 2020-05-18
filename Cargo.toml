@@ -1,0 +1,19 @@
+[package]
+name = "mps"
+version = "0.1.0"
+license = "MIT AND BSD-3-Clause"
+readme = "README.md"
+description = """
+Rust bindings to the memory pool system:
+https://www.ravenbrook.com/project/mps/
+"""
+authors = ["Techcable <Techcable@techcable.net>"]
+edition = "2018"
+# Unstable
+publish = false
+
+[dependencies]
+mps-sys = { path = "mps-sys" }
+zerogc = { git = "https://github.com/DuckLogic/zerogc.git" }
+
+[workspace]
