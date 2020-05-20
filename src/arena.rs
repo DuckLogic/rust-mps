@@ -11,11 +11,15 @@ pub struct Arena {
     raw: mps_arena_t
 }
 impl Arena {
+    #[inline]
+    pub(crate) fn as_raw(&self) -> mps_arena_t {
+        self.raw
+    }
     /// The number of collections in which objects might have been moved.
     ///
     /// If you're using a non-moving pool, this will return zero.
     #[inline]
-    pub fn moved_collections(&self) -> u64 {
+    pub fn moved_collections(&self) -> usize {
         unsafe { mps_collections(self.raw) }
     }
     /// The current commit limit for this arena (in bytes)

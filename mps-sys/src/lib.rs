@@ -11,6 +11,9 @@
 //! Automatically generated bindings to MPS
 include!(concat!(env!("OUT_DIR"), "/mps_auto.rs"));
 
+/// An unsigned word-sized integer
+pub type mps_word_t = usize;
+
 #[macro_export]
 macro_rules! mps_kw_arg {
     ($key:ident => $val:expr) => {{
@@ -34,11 +37,10 @@ pub unsafe fn mps_args_end() -> mps_arg_s {
 /// Very unsafe internally!
 #[macro_export]
 macro_rules! mps_kw_args {
-    (($key:ident => $val:expr),*) => {{
-        let result: [$crate::mps_arg_s; _] = [
-            $(mps_kw_arg($key => $val),)*
-
-        ];
-        result
+    ($($key:ident => $val:expr),*) => {{
+        arrayvec::ArrayVec::from([
+            $(mps_kw_arg!($key => $val),)*
+            $crate::mps_args_end()
+        ])
     }};
 }
