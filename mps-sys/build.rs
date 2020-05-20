@@ -17,10 +17,14 @@ fn main() {
     cc.compile("mps");
     let bindings = bindgen::Builder::default()
         .header("mps/code/mps.h")
+        .header("mps/code/mpsavm.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .whitelist_type("mps_.*")
         .whitelist_function("mps_.*")
         .whitelist_var("mps_.*")
+        .whitelist_var("MPS_.*")
+        .whitelist_var("_mps_key.*")
+        .size_t_is_usize(true)
         .generate()
         .expect("Unable to generate automatic bindings");
     bindings.write_to_file(Path::new(&env::var_os("OUT_DIR").unwrap())

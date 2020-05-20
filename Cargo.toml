@@ -15,5 +15,12 @@ publish = false
 [dependencies]
 mps-sys = { path = "mps-sys" }
 zerogc = { git = "https://github.com/DuckLogic/zerogc.git" }
+arrayvec = "^0.5"
+thiserror = "^1"
 
 [workspace]
+
+
+[profile.dev.build-override]
+# We need optimizations to make bindgen run fast
+opt-level = 3
