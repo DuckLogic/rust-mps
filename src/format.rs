@@ -1,5 +1,6 @@
 //! Communicating object formats to the MPS
 use std::os::raw::c_void;
+use std::mem;
 
 use mps_sys::*;
 use std::marker::PhantomData;
@@ -35,7 +36,7 @@ impl<'a> ObjectFormat<'a> {
         object_align: Option<usize>
     ) -> Result<ObjectFormat, MpsError>
         where M: RawFormatMethods<T> {
-        let mut args: ArrayVec<[mps_arg_s; 8]> = ArrayVec::new();
+        let mut args: ArrayVec<_, 8> = ArrayVec::new();
         unsafe {
             if let Some(align) = object_align {
                 assert!(align > 0 && align.is_power_of_two());
@@ -43,12 +44,30 @@ impl<'a> ObjectFormat<'a> {
             }
             // TODO: HEADER_SIZE?
             args.extend(mps_kw_args!(
-                FMT_SCAN => M::scan as unsafe extern "C" fn(_, _, _) -> _,
-                FMT_SKIP => M::skip as unsafe extern "C" fn(_) -> _,
-                FMT_FWD => M::forward as unsafe extern "C" fn(_, _) -> _,
-                FMT_ISFWD => M::is_forwarded as unsafe extern "C" fn(_) -> _,
-                FMT_PAD => M::pad as unsafe extern "C" fn(_, _) -> _,
-                FMT_CLASS => M::class_ptr as unsafe extern "C" fn(_) -> _
+                FMT_SCAN => Some(mem::transmute::<
+                    unsafe extern "C" fn(ScanState, *mut T, *mut T) -> mps_res_t,
+                    unsafe extern "C" fn(*mut mps_ss_s, *mut c_void, *mut c_void) -> mps_res_t
+                    >(M::scan as unsafe extern "C" fn(_, _, _) -> _)),
+                FMT_SKIP => Some(mem::transmute::<
+                    unsafe extern "C" fn(*mut T) -> *mut T,
+                    unsafe extern "C" fn(*mut c_void) -> *mut c_void
+                >(M::skip as unsafe extern "C" fn(_) -> _)),
+                FMT_FWD => Some(mem::transmute::<
+                    unsafe extern "C" fn(*mut T, *mut T),
+                    unsafe extern "C" fn(*mut c_void, *mut c_void)
+                    >(M::forward as unsafe extern "C" fn(_, _) -> _)),
+                FMT_ISFWD => Some(mem::transmute::<
+                        unsafe extern "C" fn(*mut T) -> *mut T,
+                        unsafe extern "C" fn(*mut c_void) -> *mut c_void
+                    >(M::is_forwarded as unsafe extern "C" fn(_) -> _)),
+                FMT_PAD => Some(mem::transmute::<
+                    unsafe extern "C" fn(*mut T, usize),
+                    unsafe extern "C" fn(*mut c_void, usize)
+                    >(M::pad as unsafe extern "C" fn(_, _) -> _)),
+                FMT_CLASS => Some(mem::transmute::<
+                        unsafe extern "C" fn(*mut T) -> *mut c_void,
+                        unsafe extern "C" fn(*mut c_void) -> *mut c_void
+                    >(M::class_ptr as unsafe extern "C" fn(_) -> _))
             ));
             let mut fmt = std::ptr::null_mut();
             handle_mps_res!(mps_fmt_create_k(&mut fmt, arena.as_raw(), args.as_mut_ptr()))?;
@@ -120,7 +139,7 @@ pub unsafe trait RawFormatMethods<T: ?Sized> {
     /// return its new location.
     ///
     /// Otherwise return null.
-    unsafe extern "C" fn is_forwarded(old: *mut T);
+    unsafe extern "C" fn is_forwarded(old: *mut T) -> *mut T;
     /// Create a padding object, to fill in otherwise unused space.
     ///
     /// This method must create a padding object of the specified size
@@ -211,7 +230,7 @@ impl ScanFixState {
     #[inline(always)]
     pub unsafe fn should_fix<T>(&mut self, addr: *mut T) -> bool {
         const CHAR_BIT: usize = 8; // # of bits in a char
-        let wt: mps_word_t = (1 as mps_word_t) << ((addr as mps_word_t) >> self.zs
+        let wt: mps_word_t = 1usize << ((addr as mps_word_t) >> self.zs
             & (std::mem::size_of::<mps_word_t>() * CHAR_BIT - 1));
         self.ufs |= wt;
         (self.w & wt) != 0

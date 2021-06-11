@@ -14,8 +14,8 @@ publish = false
 
 [dependencies]
 mps-sys = { path = "mps-sys" }
-zerogc = { git = "https://github.com/DuckLogic/zerogc.git" }
-arrayvec = "^0.5"
+zerogc = "0.2.0-alpha.3"
+arrayvec = "0.7"
 thiserror = "^1"
 
 [workspace]

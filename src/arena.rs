@@ -5,7 +5,7 @@ use crate::err::MpsError;
 
 /// A MPS Arena, for allocating raw memory from the operating system
 ///
-/// Generally you want to use a VM arena,
+/// Generally you want to use a ["Virtual memory" arena](https://www.ravenbrook.com/project/mps/master/manual/html/topic/arena.html#virtual-memory-arenas),
 /// to use the OS's virtual memory system
 pub struct Arena {
     raw: mps_arena_t
@@ -34,6 +34,7 @@ impl Arena {
     ///
     /// The commit limit cannot be set to a value that is lower
     /// than the number of bytes that the MPS is using.
+    #[inline]
     pub fn set_commit_limit(&self, limit: usize) -> Result<(), MpsError> {
         unsafe {
             handle_mps_res!(mps_arena_commit_limit_set(self.raw, limit))
@@ -65,9 +66,28 @@ impl Arena {
     /// Return the maximum time, in seconds,
     /// that operations within the arena may pause the client program for.
     ///
-    /// I (Techcable) believe that this is an advisory setting
+    /// This is an advisory limit.
+    /// See [Arena::set_pause_time] for more details.
+    #[inline]
     pub fn pause_time(&self) -> f64 {
         unsafe { mps_arena_pause_time(self.raw) }
+    }
+    /// Set the maximum time, in seconds, that operations within
+    /// an arena may pause the client program for.
+    ///
+    /// The MPS makes more efficient use of processor time when it is allowed longer pauses, up to the maximum
+    /// time it takes to collect the entire arena.
+    ///
+    /// This is an advisory or best-effort limit.
+    /// There is no hard guarantee that the arena
+    /// will complete in the .
+    ///
+    /// See [mps_arena_pause_time_set](https://www.ravenbrook.com/project/mps/master/manual/html/topic/arena.html#c.mps_arena_pause_time_set)
+    /// for more details.
+    #[inline]
+    pub fn set_pause_time(&self, pause_time: f64) {
+        assert!(pause_time >= 0.0);
+        unsafe { mps_arena_pause_time_set(self.raw, pause_time) }
     }
     /// The current spare commit limit for this arena,
     /// as a proportion of total committed size.
@@ -76,11 +96,12 @@ impl Arena {
     /// that is not currently in use by the program.
     ///
     /// If memory usage is lower than this fraction, the MPS
-    /// will return some back to the opearting system.
+    /// will return some back to the operating system.
+    #[inline]
     pub fn spare_limit(&self) -> f64 {
         unsafe { mps_arena_spare(self.raw) }
     }
-    /// The ammount of committed memory that is "spare"
+    /// The amount of committed memory that is "spare"
     /// and is not currently being used by MPS or the client program.
     ///
     /// It is used by the arena to avoid calling the operating system
@@ -90,6 +111,29 @@ impl Arena {
     pub fn spare_committed(&self) -> usize {
         unsafe { mps_arena_spare_committed(self.raw) }
     }
+    /// Request the collector to begin garbage collection.
+    ///
+    /// This will return quickly, without blocking until completion.
+    /// Contrast this to [Arena::full_collection]
+    ///
+    /// Returns `Ok(())` if collection successfully
+    /// begins and an error if it is not.
+    /// Generally, errors from this method are non fatal (and can be safely ignored).
+    #[inline]
+    pub fn begin_collection(&self) -> Result<(), MpsError> {
+        unsafe {
+            handle_mps_res!(mps_arena_start_collect(self.raw))
+        }
+    }
+    /// Begin a full collection, blocking until completion
+    ///
+    /// Contrast with [Arena::begin_collection], which asynchronously
+    /// requests a collection, without blocking until completion.
+    #[inline]
+    pub fn full_collection(&self) {
+        unsafe { mps_arena_collect(self.raw); }
+    }
+
 }
 impl Drop for Arena {
     fn drop(&mut self) {
@@ -103,7 +147,7 @@ impl Drop for Arena {
 unsafe impl Send for Arena {}
 /// MPS is thread safe. I think this is pretty much true of all operations
 ///
-/// https://www.ravenbrook.com/project/mps/version/1.117/manual/html/design/thread-safety.html
+/// <https://www.ravenbrook.com/project/mps/master/manual/html/design/thread-safety.html>
 unsafe impl Sync for Arena {}
 
 /// An arena that uses the operating system's virtual memory system (`mmap`)
@@ -157,7 +201,7 @@ pub struct VirtualMemoryArenaBuilder {
     /// The maximum time in seconds that arena operations may pause the
     /// client for.
     ///
-    /// I (Techcable) suspect this is an advisory setting
+    /// See [mps_arena_pause_time_set](https://www.ravenbrook.com/project/mps/master/manual/html/topic/arena.html#c.mps_arena_pause_time_set)
     pub pause_time: Option<f64>,
 }
 impl VirtualMemoryArenaBuilder {
@@ -166,7 +210,7 @@ impl VirtualMemoryArenaBuilder {
     pub fn build(self) -> Result<Arena, MpsError> {
         let VirtualMemoryArenaBuilder { class, arena_size,
             commit_limit, spare, pause_time } = self;
-        let mut kws: ArrayVec<[_ ; 5]> = ArrayVec::new();
+        let mut kws: ArrayVec<_, 5> = ArrayVec::new();
         unsafe {
             if let Some(size) = arena_size {
                 kws.push(mps_kw_arg!(ARENA_SIZE => size));
@@ -175,7 +219,7 @@ impl VirtualMemoryArenaBuilder {
                 kws.push(mps_kw_arg!(COMMIT_LIMIT => commit_limit));
             }
             if let Some(spare) = spare {
-                assert!(spare >= 0.0 && spare <= 1.0, "Invalid spare: {}", spare);
+                assert!((0.0..=1.0).contains(&spare), "Invalid spare: {}", spare);
                 kws.push(mps_kw_arg!(SPARE => spare));
             }
             if let Some(pause_time) = pause_time {

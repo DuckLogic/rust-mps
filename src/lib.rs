@@ -1,6 +1,13 @@
 #![deny(
     missing_docs, // Planned for (temporary) usage with DuckLogic
 )]
+#![allow(
+    /*
+     * This whole thing is so unsafe, I'm not even going to try
+     * and document it with '# Safety' comments. It would just be insane.
+     */
+    clippy::missing_safety_doc,
+)]
 #![feature(
     concat_idents, // Used for mps_kw_arg
 )]

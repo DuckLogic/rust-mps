@@ -3,13 +3,13 @@ Licensing Info
 rust-mps includes a copy of Ravenbook's Memory Pool System.
 
 As of 2020-05-01, the MPS was
-[relicensed under the permissive 2-clause BSD license](https://github.com/Ravenbrook/mps/commit/00410d73).
+[re-licensed under the permissive 2-clause BSD license](https://github.com/Ravenbrook/mps/commit/00410d73).
 
 You don't have to comply with the old (restrictive) Sleepycat license
 and can now freely link with proprietary code.
 
 The code in this repository (the Rust bindings) are MIT licensed
-and is seperate from the MPS itself.
+and is separate from the MPS itself.
 
 rust-mps License
 ----------------

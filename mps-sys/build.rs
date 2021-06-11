@@ -20,14 +20,15 @@ fn main() {
         .header("mps/code/mpsavm.h") // VM arena
         .header("mps/code/mpscams.h") // Pool: Automatic Mark/Sweep
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
-        .whitelist_type("mps_.*")
-        .whitelist_function("mps_.*")
-        .whitelist_function("_mps_.*") // We need access to internal funcs :(
-        .whitelist_var("mps_.*")
-        .whitelist_var("MPS_.*")
-        .whitelist_var("_mps_key.*")
-        .blacklist_type("mps_word_t") // We redefine this as `usize`
+        .allowlist_type("mps_.*")
+        .allowlist_function("mps_.*")
+        .allowlist_function("_mps_.*") // We need access to internal funcs :(
+        .allowlist_var("mps_.*")
+        .allowlist_var("MPS_.*")
+        .allowlist_var("_mps_key.*")
+        .blocklist_type("mps_word_t") // We redefine this as `usize`
         .size_t_is_usize(true)
+        .rustfmt_bindings(true)
         .generate()
         .expect("Unable to generate automatic bindings");
     bindings.write_to_file(Path::new(&env::var_os("OUT_DIR").unwrap())
