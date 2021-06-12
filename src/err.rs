@@ -1,5 +1,18 @@
 use thiserror::Error;
 
+/// Convert a [Result<(), mps_res_t>][std::result::Result] to a [mps_res_t](::mps_sys::mps_res_t)
+#[macro_export]
+macro_rules! from_mps_res {
+    ($try:expr) => {{
+        let res: Result<(), mps_sys::mps_res_t> = try { $try };
+        match res {
+            Ok(()) => ::mps_sys::MPS_RES_OK as ::mps_sys::mps_res_t,
+            Err(code) => code
+        }
+    }}
+}
+/// Convert a [::mps_sys::mps_res_t] to a [Result]
+#[macro_export]
 macro_rules! handle_mps_res {
     ($res:expr) => {{
         let res: mps_sys::mps_res_t = $res;

@@ -4,12 +4,35 @@ use std::io::{Write, Read};
 use crate::Entry;
 use std::fmt::Debug;
 use std::alloc::Layout;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use mps::format::{RawFormatMethods, ScanState};
+use std::os::raw::c_void;
+
+use mps::from_mps_res;
+use mps_sys::mps_res_t;
+
+const ALIGNMENT: usize = std::mem::align_of::<usize>();
+/// Align the specified size upwards to the next multiple of the word size
+#[inline]
+pub const fn align_word(size: usize) -> usize {
+    (size + ALIGNMENT - 1) & !(ALIGNMENT - 1)
+}
+/// Align size upwards to the next multiple of the word size,
+/// and additionally ensure that it's big enough to store a forwarding object.
+#[inline]
+pub const fn align_obj(size: usize) -> usize {
+    std::cmp::max(
+        align_word(size),
+        align_word(ObjectVal::compute_size(
+            std::mem::size_of::<ForwardingObject>()
+        ))
+    )
+}
 
 // Special objects
 macro_rules! special_objs {
     ($($key:ident => $name:expr),*) => {
-        $(pub static $key: ObjectRef = ObjectRef(&ObjectVal::Special { name: StringRef::from_str($name) });)*
+        $(pub static $key: ObjectRef = ObjectRef(&mut ObjectVal::Special { name: StringRef::from_str($name) });)*
     };
 }
 special_objs! {
@@ -62,19 +85,18 @@ pub struct SchemeType(std::mem::Discriminant<ObjectVal>);
 static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
 // Before integration with MPS, we just leak
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 #[repr(C)]
-pub struct ObjectRef(&'static ObjectVal);
+pub struct ObjectRef(*mut ObjectVal);
 impl ObjectRef {
     unsafe fn uninit(size: usize) -> ObjectRef {
-        let v = Vec::with_capacity(size);
+        let v = Vec::<u8>::with_capacity(size);
         let p = v.as_ptr() as *mut ObjectVal;
         std::mem::forget(v);
-        TOTAL_ALLOCATED.fetch_add(size);
-        ObjectRef(unsafe { &*p })
+        TOTAL_ALLOCATED.fetch_add(size, Ordering::AcqRel);
+        ObjectRef(p)
     }
-    pub fn pair(first: ObjectRef, second: ObjectRef) -> ObjectRef {
-        let v = ObjectVal::Pair(first, second);
+    pub fn pair(car: ObjectRef, cdr: ObjectRef) -> ObjectRef {
+        let v = ObjectVal::Pair { car, cdr };
         unsafe {
             let obj = ObjectRef::uninit(v.size());
             obj.0.write(v);
@@ -82,12 +104,16 @@ impl ObjectRef {
         }
     }
 }
+delegating_impl!(ObjectRef, |r| &*r as &ObjectVal);
 #[derive(Debug, Hash, Eq, PartialEq)]
 #[repr(C, u8)] // See enum repr
 pub enum ObjectVal {
-    Pair(ObjectRef, ObjectRef),
+    Pair {
+        car: ObjectRef,
+        cdr: ObjectRef
+    },
     Symbol {
-        name: InlineStr
+        name: ObjectRef
     },
     Integer(i64),
     Special {
@@ -98,7 +124,15 @@ pub enum ObjectVal {
     Port(Port),
     Character(char),
     Vector(InlineArray),
-    Table(Table)
+    Table(Table),
+    Forward(ForwardingObject),
+    Forward2 {
+        fwd: ObjectRef
+    },
+    Pad1,
+    Pad {
+        size: usize
+    }
 }
 impl ObjectVal {
     /// The size of this object
@@ -109,14 +143,14 @@ impl ObjectVal {
     fn size(&self) -> usize {
         use std::mem::{align_of, size_of};
         let (field_align, field_size) = match *self {
-            ObjectVal::Pair(ObjectRef(_), ObjectRef(_)) => {
+            ObjectVal::Pair { car: ObjectRef(_), cdr:  ObjectRef(_) } => {
                 (
                     align_of::<(ObjectRef, ObjectRef)>(),
                     size_of::<(ObjectRef, ObjectRef)>()
                 )
             },
-            ObjectVal::Symbol { ref name } => {
-                (align_of::<InlineStr>(), name.used_mem())
+            ObjectVal::Symbol { name: ObjectRef(_) } => {
+                (align_of::<ObjectRef>(), size_of::<ObjectRef>())
             },
             ObjectVal::Integer(_) => {
                 (align_of::<i64>(), size_of::<i64>())
@@ -145,11 +179,88 @@ impl ObjectVal {
                     align_of::<Table>(),
                     size_of::<Table>()
                 )
-            }
+            },
+            ObjectVal::Forward(ForwardingObject { fwd: _, size }) => {
+                (
+                    ALIGNMENT,
+                    size
+                )
+            },
+            ObjectVal::Forward2 { fwd: ObjectRef(_) } => {
+                (
+                    align_of::<ObjectRef>(),
+                    size_of::<ObjectRef>()
+                )
+            },
+            ObjectVal::Pad1 => (ALIGNMENT, 0),
+            ObjectVal::Pad { size } => (ALIGNMENT, size),
         };
+        debug_assert!(field_align <= ALIGNMENT);
+        align_obj(ObjectVal::compute_size(field_size))
+    }
+    #[inline]
+    const fn compute_size(field_size: usize) -> usize {
         let result = Layout::new::<u8>(); // discriminant
-        result.size() + result.padding_needed_for(field_align) + field_size
+        result.size() + result.padding_needed_for(ALIGNMENT) + field_size
+    }
+}
+unsafe impl RawFormatMethods for ObjectVal {
+    type Obj = Self;
+    const ALIGNMENT: usize = ALIGNMENT;
 
+    unsafe extern fn class_ptr(obj: *mut Self::Obj) -> *mut c_void {
+        todo!()
+    }
+
+    unsafe extern fn forward(old: *mut Self::Obj, new: *mut Self::Obj) {
+        todo!()
+    }
+
+    unsafe extern fn is_forwarded(old: *mut Self::Obj) -> *mut Self::Obj {
+        todo!()
+    }
+
+    unsafe extern fn pad(addr: *mut Self::Obj, size: usize) {
+        todo!()
+    }
+
+    unsafe extern fn scan(state: ScanState, mut base: *mut ObjectVal, limit: *mut Self::Obj) -> mps_res_t {
+        state.fix_with(|state| {
+            while base < limit {
+                let mut size = align_obj((*base).size());
+                match *base {
+                    ObjectVal::Pair { ref mut car, ref mut cdr } => {
+                        state.fix(&mut car.0)?;
+                        state.fix(&mut cdr.0)?;
+                    },
+                    ObjectVal::Integer(_) => {},
+                    ObjectVal::Symbol { name } => {
+                        state.fix(&mut name.raw_bytes)?;
+                    }
+                    ObjectVal::Special { .. } => {}
+                    ObjectVal::Operator(ref mut op) => {
+                        state.fix(&mut op.arguments.0)?;
+                        state.fix(&mut op.body.0)?;
+                        state.fix(&mut op.env.0)?;
+                        state.fix(&mut op.op_env.0)?;
+                    }
+                    ObjectVal::String(_) => {}
+                    ObjectVal::Port(ref mut p) => {
+                        state.fix(&mut p.name.0)?;
+                    }
+                    ObjectVal::Character(_) => {}
+                    ObjectVal::Vector(_) => {}
+                    ObjectVal::Table(_) => {},
+
+                }
+                base = base.add(size);
+            }
+            Ok(())
+        })
+    }
+
+    unsafe extern fn skip(addr: *mut Self::Obj) -> *mut Self::Obj {
+        todo!()
     }
 }
 #[derive(Debug, Eq, PartialEq)]
@@ -203,6 +314,12 @@ impl StringRef {
     }
 }
 delegating_impl!(StringRef, |s| s.as_str());
+#[repr(C)]
+struct ForwardingObject {
+    pub fwd: ObjectRef,
+    pub size: usize
+}
+delegating_impl!(ForwardingObject, |obj| obj.fwd);
 #[derive(Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct Operator {
@@ -210,6 +327,8 @@ pub struct Operator {
     pub entry: Entry,
     pub arguments: ObjectRef,
     pub body: ObjectRef,
+    pub env: ObjectRef,
+    pub op_env: ObjectRef
 }
 #[repr(C)]
 pub struct InlineStr {

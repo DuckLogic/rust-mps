@@ -31,11 +31,11 @@ impl<'a> ObjectFormat<'a> {
     /// on `<M as RawFormatMethods>`
     ///
     /// The minimum alignment of an object is optionally given by `object_align`
-    pub fn managed_with<M, T>(
+    pub fn managed_with<M>(
         arena: &'a Arena,
         object_align: Option<usize>
     ) -> Result<ObjectFormat, MpsError>
-        where M: RawFormatMethods<T> {
+        where M: RawFormatMethods {
         let mut args: ArrayVec<_, 8> = ArrayVec::new();
         unsafe {
             if let Some(align) = object_align {
@@ -44,28 +44,29 @@ impl<'a> ObjectFormat<'a> {
             }
             // TODO: HEADER_SIZE?
             args.extend(mps_kw_args!(
+                FMT_ALIGN => M::ALIGNMENT,
                 FMT_SCAN => Some(mem::transmute::<
-                    unsafe extern "C" fn(ScanState, *mut T, *mut T) -> mps_res_t,
+                    unsafe extern "C" fn(ScanState, *mut M::Obj, *mut M::Obj) -> mps_res_t,
                     unsafe extern "C" fn(*mut mps_ss_s, *mut c_void, *mut c_void) -> mps_res_t
                     >(M::scan as unsafe extern "C" fn(_, _, _) -> _)),
                 FMT_SKIP => Some(mem::transmute::<
-                    unsafe extern "C" fn(*mut T) -> *mut T,
+                    unsafe extern "C" fn(*mut M::Obj) -> *mut M::Obj,
                     unsafe extern "C" fn(*mut c_void) -> *mut c_void
                 >(M::skip as unsafe extern "C" fn(_) -> _)),
                 FMT_FWD => Some(mem::transmute::<
-                    unsafe extern "C" fn(*mut T, *mut T),
+                    unsafe extern "C" fn(*mut M::Obj, *mut M::Obj),
                     unsafe extern "C" fn(*mut c_void, *mut c_void)
                     >(M::forward as unsafe extern "C" fn(_, _) -> _)),
                 FMT_ISFWD => Some(mem::transmute::<
-                        unsafe extern "C" fn(*mut T) -> *mut T,
+                        unsafe extern "C" fn(*mut M::Obj) -> *mut M::Obj,
                         unsafe extern "C" fn(*mut c_void) -> *mut c_void
                     >(M::is_forwarded as unsafe extern "C" fn(_) -> _)),
                 FMT_PAD => Some(mem::transmute::<
-                    unsafe extern "C" fn(*mut T, usize),
+                    unsafe extern "C" fn(*mut M::Obj, usize),
                     unsafe extern "C" fn(*mut c_void, usize)
                     >(M::pad as unsafe extern "C" fn(_, _) -> _)),
                 FMT_CLASS => Some(mem::transmute::<
-                        unsafe extern "C" fn(*mut T) -> *mut c_void,
+                        unsafe extern "C" fn(*mut M::Obj) -> *mut c_void,
                         unsafe extern "C" fn(*mut c_void) -> *mut c_void
                     >(M::class_ptr as unsafe extern "C" fn(_) -> _))
             ));
@@ -119,12 +120,16 @@ impl Drop for ObjectFormat<'_> {
 ///    1. Access memory inside the object/block they've been asked to examine
 ///    2. Access MPS memory that is in pools that doen't protect memory (unmanaged pools)
 ///    3. Access memory not managed by the MPS
-pub unsafe trait RawFormatMethods<T: ?Sized> {
+pub unsafe trait RawFormatMethods {
+    /// The type of object managed by these format methods
+    type Obj;
+    /// The alignment of objects belonging to this format
+    const ALIGNMENT: usize;
     /// Give an address related to the class of the object,
     /// or a null pointer if none is available.
     ///
     /// Padding and forwarding objects should return null
-    unsafe extern "C" fn class_ptr(obj: *mut T) -> *mut c_void;
+    unsafe extern "C" fn class_ptr(obj: *mut Self::Obj) -> *mut c_void;
     /// The MPS calls the forward method for an object format when
     /// it has relocated an object belonging to that format.
     ///
@@ -134,12 +139,12 @@ pub unsafe trait RawFormatMethods<T: ?Sized> {
     /// 1. Be compatible with all the other methods in this format
     /// 2. Be the same size as the original object. In other words,
     ///    the "skip"/object size method must return the same result as the original.
-    unsafe extern "C" fn forward(old: *mut T, new: *mut T);
+    unsafe extern "C" fn forward(old: *mut Self::Obj, new: *mut Self::Obj);
     /// If the specified object is a forwarding object,
     /// return its new location.
     ///
     /// Otherwise return null.
-    unsafe extern "C" fn is_forwarded(old: *mut T) -> *mut T;
+    unsafe extern "C" fn is_forwarded(old: *mut Self::Obj) -> *mut Self::Obj;
     /// Create a padding object, to fill in otherwise unused space.
     ///
     /// This method must create a padding object of the specified size
@@ -149,7 +154,7 @@ pub unsafe trait RawFormatMethods<T: ?Sized> {
     ///
     /// The MPS typically uses this to pack objects into fixed sized units
     /// (such as OS pages).
-    unsafe extern "C" fn pad(addr: *mut T, size: usize);
+    unsafe extern "C" fn pad(addr: *mut Self::Obj, size: usize);
     /// Called when the MPS needs to scan (and relocate) objects in a block of memory
     /// that belong to this format.
     ///
@@ -161,7 +166,7 @@ pub unsafe trait RawFormatMethods<T: ?Sized> {
     /// If the object format is capable of creating forwarding objects or padding objects,
     /// the scan method must be able to scan these objects.
     /// The scan method must *never fixup forwarding objects*.
-    unsafe extern "C" fn scan(state: ScanState, base: *mut T, limit: *mut T) -> mps_res_t;
+    unsafe extern "C" fn scan(state: ScanState, base: *mut Self::Obj, limit: *mut Self::Obj) -> mps_res_t;
     /// Return the address of the next object (implicitly computing its size).
     ///
     /// If this format has no headers, this is the address just past the end of the object.
@@ -172,7 +177,7 @@ pub unsafe trait RawFormatMethods<T: ?Sized> {
     /// this method must be able to handle them.
     ///
     /// This method must be infallible.
-    unsafe extern "C" fn skip(addr: *mut T) -> *mut T;
+    unsafe extern "C" fn skip(addr: *mut Self::Obj) -> *mut Self::Obj;
 }
 /// The initial scan state passed to an object format
 #[repr(transparent)]
@@ -185,12 +190,15 @@ impl ScanState {
     ///
     /// Within this closure, the `ScanFixState` is in a special state
     /// and shouldn't be passed to external functions.
+    ///
+    /// Corresponds to [`MPS_SCAN_BEGIN`](https://www.ravenbrook.com/project/mps/master/manual/html/topic/scanning.html#c.MPS_SCAN_BEGIN)
+    /// and [`MPS_SCAN_END`](https://www.ravenbrook.com/project/mps/master/manual/html/topic/scanning.html#c.MPS_SCAN_END)
     #[inline(always)] // MPS implements all of this as macros. Does it have to be inline?
     pub unsafe fn fix_with<F>(&mut self, func: F) -> mps_res_t
         where F: FnOnce(&mut ScanFixState) -> Result<(), mps_res_t> {
         // See: MPS_SCAN_BEGIN
         let mut state = ScanFixState {
-            state: self.raw,
+            state: ScanState { raw: self.raw },
             zs: (*self.raw)._zs,
             w: (*self.raw)._w,
             ufs: (*self.raw)._ufs,
@@ -201,7 +209,7 @@ impl ScanState {
         }
         // See: MPS_SCAN_END
         (*self.raw)._ufs = state.ufs;
-        0 // MPS_RES_OK
+        mps_sys::MPS_RES_OK as mps_res_t
     }
 }
 
@@ -212,7 +220,7 @@ impl ScanState {
 /// **must not be passed to an external function**
 pub struct ScanFixState {
     // NOTE: See internal variables in MPS_SCAN_BEGIN
-    state: mps_ss_t,
+    state: ScanState,
     zs: mps_word_t,
     w: mps_word_t,
     ufs: mps_word_t,
@@ -226,7 +234,7 @@ impl ScanFixState {
     /// If nothing needs to be done between `should_fix` and `fix`,
     /// you can use the convenience method `try_fix`.
     ///
-    /// Corresponds to C macro `MPS_FIX1`
+    /// Corresponds to C macro [`MPS_FIX1`](https://www.ravenbrook.com/project/mps/master/manual/html/topic/scanning.html#c.MPS_FIX1)
     #[inline(always)]
     pub unsafe fn should_fix<T>(&mut self, addr: *mut T) -> bool {
         const CHAR_BIT: usize = 8; // # of bits in a char
@@ -243,9 +251,11 @@ impl ScanFixState {
     ///
     /// If this returns an error, the scan method must return that immediately
     /// without fixing any further references.
+    ///
+    /// This corresponds to the C macro [`MPS_FIX2`](https://www.ravenbrook.com/project/mps/master/manual/html/topic/scanning.html#c.MPS_FIX2)
     #[inline(always)]
     pub unsafe fn fix<T>(&mut self, addr: &mut *mut T) -> Result<(), mps_res_t> {
-        let res = ::mps_sys::_mps_fix2(self.state, addr as *mut *mut T as *mut *mut c_void);
+        let res = ::mps_sys::_mps_fix2(self.state.raw, addr as *mut *mut T as *mut *mut c_void);
         if res == 0 {
             Ok(())
         } else {
@@ -258,7 +268,8 @@ impl ScanFixState {
     /// so you need to store it back to the object being scanned.
     /// Errors need to be returned to the caller immediately.
     ///
-    /// This is a combination of `should_fix` and `fix`
+    /// This is a combination of `should_fix` and `fix`.
+    /// It corresponds to the C macro [`MPS_FIX12`](https://www.ravenbrook.com/project/mps/master/manual/html/topic/scanning.html#c.MPS_FIX12)
     #[inline(always)]
     pub unsafe fn try_fix<T>(&mut self, addr: &mut *mut T) -> Result<(), mps_res_t> {
         if self.should_fix(addr) {
@@ -266,5 +277,20 @@ impl ScanFixState {
         } else {
             Ok(())
         }
+    }
+    /// Call a sub-function to do scanning, passing the scan state correectly.
+    ///
+    /// Inside [ScanState::fix_with], the scan state is in a special state, and must not be passed to a function.
+    /// If you really need to do so, for example because you have a structure shared between two object formats,
+    /// you must wrap the call with [call_scan](ScanFixState::call_State) to ensure that the scan state is passed correctly.
+    ///
+    /// The sub-function being called must use [ScanState::fix_with] appropriately.
+    ///
+    /// Corresponds to C macro [MPS_FIX_CALL](https://www.ravenbrook.com/project/mps/master/manual/html/topic/scanning.html#c.MPS_FIX_CALL).
+    #[inline]
+    pub fn call_scan(&mut self, func: impl FnOnce(&mut ScanState) -> Result<(), mps_res_t>) -> Result<(), mps_res_t> {
+        func(&mut self.state)?;
+        self.ufs |= unsafe { (*self.state.raw)._ufs };
+        Ok(())
     }
 }
