@@ -22,5 +22,6 @@ mod err;
 pub mod arena;
 pub mod pools;
 pub mod format;
+pub mod alloc;
 
 pub use err::MpsError;

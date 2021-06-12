@@ -66,9 +66,10 @@ pub enum MpsError {
 }
 impl MpsError {
     #[cold]
+    #[inline]
     pub(crate) fn from_code(code: mps_sys::mps_res_t) -> MpsError {
         let code = code as u32; // why?
-        assert_ne!(code, mps_sys::MPS_RES_OK);
+        debug_assert_ne!(code, mps_sys::MPS_RES_OK);
         match code {
             mps_sys::MPS_RES_FAIL => MpsError::Fail,
             mps_sys::MPS_RES_IO => MpsError::Io,
