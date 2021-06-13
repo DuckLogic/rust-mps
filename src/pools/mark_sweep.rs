@@ -49,6 +49,7 @@ impl<'a> AutoMarkSweepBuilder<'a> {
     /// Switch to using the [debug pool](https://www.ravenbrook.com/project/mps/master/manual/html/topic/debugging.html#debugging-pools),
     /// configuring it with the specified options
     #[inline]
+    #[deprecated(note = "Seems buggy last time I tried it")]
     pub fn debug(&mut self, opts: Option<DebugOptions>) -> &mut Self {
         self.debug = opts;
         self

@@ -18,11 +18,20 @@ zerogc = "0.2.0-alpha.3"
 arrayvec = "0.7"
 thiserror = "^1"
 
+[features]
+# Enable debugging for the allocation code
+# NOTE: This is only enabled if this is true
+# AND cfg!(debug_assertions) is enabled
+debug-mps-alloc = []
+
 [workspace]
 
 [profile.dev.build-override]
 # We need some optimizations to make bindgen run fast
 opt-level = 3
+
+[profile.release]
+debug = true
 
 [dev-dependencies]
 slog = "2.7"

@@ -12,7 +12,7 @@ use mps::format::{RawFormatMethods, ScanState, ObjectFormat};
 use std::ffi::{c_void, CStr};
 use mps::arena::{VirtualMemoryArenaClass, Arena};
 use mps::pools::Pool;
-use mps::pools::mark_sweep::{AutoMarkSweep, DebugOptions};
+use mps::pools::mark_sweep::{AutoMarkSweep};
 use mps::MpsError;
 use mps::alloc::AllocationPoint;
 use std::alloc::Layout;
@@ -84,9 +84,12 @@ unsafe impl RawFormatMethods for TreeObject {
                         state.fix(new)?;
                     },
                     TreeObject::Tree(Tree { ref mut children }) => {
-                        if let Some((left, right)) = children.get_mut() {
-                            state.fix(&mut *(left as *mut _ as *mut *mut Tree))?;
-                            state.fix(&mut *(right as *mut _ as *mut *mut Tree))?;
+                        if let Some((left, right)) = children.get() {
+                            let mut left = left as *const _ as *mut Tree;
+                            let mut right = right as *const _ as *mut Tree;
+                            state.fix(&mut left)?;
+                            state.fix(&mut right)?;
+                            children.set(Some((&*left, &*right)));
                         }
                     }
                     TreeObject::Padding { size: _ } => {},
@@ -98,7 +101,7 @@ unsafe impl RawFormatMethods for TreeObject {
     }
 
     unsafe extern fn skip(addr: *mut Self::Obj) -> *mut Self::Obj {
-        addr.add(addr.read().size())
+        (addr as *mut u8).add(addr.read().size()) as *mut Self
     }
 }
 
@@ -153,7 +156,7 @@ impl PoolType {
     fn create<'a>(&self, arena: &'a Arena) -> Result<Box<dyn Pool<'a> + 'a>, MpsError> {
         let format = ObjectFormat::managed_with::<TreeObject>(arena)?;
         match *self {
-            PoolType::MarkSweep => Ok(Box::new(AutoMarkSweep::builder(arena).debug(Some(DebugOptions::default())).build(format)?))
+            PoolType::MarkSweep => Ok(Box::new(AutoMarkSweep::builder(arena).build(format)?))
         }
     }
 }
@@ -195,13 +198,14 @@ fn main() {
         let depth = half_depth * 2;
         let iterations = 1 << ((max_depth - depth + min_depth) as u32);
         let message = inner(&gc, depth, iterations).unwrap();
+        gc.arena.full_collection();
         println!("{}", message);
     });
 
     println!("long lived tree of depth {}\t check: {}", max_depth, item_check(&long_lived_tree));
     drop(gc.allocation_point);
-    drop(pool);
     drop(root);
     drop(thread);
+    drop(pool);
     drop(arena);
 }

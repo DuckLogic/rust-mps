@@ -79,8 +79,8 @@ use std::ffi::c_void;
 ///
 /// If this is false, the allocation code will be inlined and have assertions off.
 ///
-/// By default this matches `cfg!(debug_assertions)`
-pub const DEBUG_ALLOCATION_POINTS: bool = cfg!(debug_assertions);
+/// By default this is controlled by a feature flag `cfg!(feature="debug-mps-alloc") && cfg!(debug_assertions)`
+pub const DEBUG_ALLOCATION_POINTS: bool = cfg!(feature = "debug-mps-alloc") && cfg!(debug_assertions);
 
 /// An allocation point.
 ///
