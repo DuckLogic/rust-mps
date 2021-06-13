@@ -72,6 +72,16 @@ use crate::err::MpsError;
 use std::alloc::Layout;
 use std::ffi::c_void;
 
+/// Whether or not to debug the allocation points
+///
+/// If this is true, allocation points will do out-of-line calls to the MPS,
+/// which will in turn do its own assertions.
+///
+/// If this is false, the allocation code will be inlined and have assertions off.
+///
+/// By default this matches `cfg!(debug_assertions)`
+pub const DEBUG_ALLOCATION_POINTS: bool = cfg!(debug_assertions);
+
 /// An allocation point.
 ///
 /// This is represented as a pointer to a [mps_ap_s](::mps_sys::mps_ap_s). This
@@ -141,20 +151,27 @@ impl AllocationPoint {
     /// - Undefined behavior if the size is not properly aligned.
     /// - Undefined behavior if the resulting pointer is used improperly.
     ///   It must be initialized before any further use (see module docs).
-    #[inline(always)]
+    #[cfg_attr(not(debug_assertions), inline(always))]
+    #[cfg_attr(debug_assertions, inline)]
     pub unsafe fn reserve(&self, size: usize) -> Result<mps_addr_t, MpsError> {
         /*
          * C impl: https://github.com/Ravenbrook/mps/blob/e198a504f3ba2197686c55/code/mps.h#L614
          * See also relevant docs:
          * https://www.ravenbrook.com/project/mps/master/manual/html/topic/allocation.html#allocation-point-implementation
          */
-        let alloc = (*self.raw).alloc;
-        let next = alloc.wrapping_add(size);
-        if next > alloc && next <= (*self.raw).limit {
-            (*self.raw).alloc = next;
-            Ok((*self.raw).init)
+        if !DEBUG_ALLOCATION_POINTS {
+            let alloc = (*self.raw).alloc;
+            let next = alloc.wrapping_add(size);
+            if next > alloc && next <= (*self.raw).limit {
+                (*self.raw).alloc = next;
+                Ok((*self.raw).init)
+            } else {
+                self._fill(size)
+            }
         } else {
-            self._fill(size)
+            let mut res = std::ptr::null_mut();
+            handle_mps_res!(::mps_sys::mps_reserve(&mut res, self.raw, size))?;
+            Ok(res)
         }
     }
     /// Commit a previously reserved block on an allocation point.
@@ -171,14 +188,19 @@ impl AllocationPoint {
     ///   method, and must have been initialized consistent with the allocation point protocol (as described in the module docs).
     /// - The size must match the allocated size
     /// - The memory must be fully initialized, and ready to be scanned by the MPS.
-    #[inline(always)]
+    #[cfg_attr(not(debug_assertions), inline(always))]
+    #[cfg_attr(debug_assertions, inline)]
     pub unsafe fn commit(&self, p: mps_addr_t, size: usize) -> bool {
         // https://github.com/Ravenbrook/mps/blob/e198a504f3ba2197686c55e048996/code/mps.h#L640
-        (*self.raw).init = (*self.raw).alloc;
-        if !(*self.raw).limit.is_null() {
-            true
+        if !DEBUG_ALLOCATION_POINTS {
+            (*self.raw).init = (*self.raw).alloc;
+            if !(*self.raw).limit.is_null() {
+                true
+            } else {
+                self._trip(p, size)
+            }
         } else {
-            self._trip(p, size)
+            ::mps_sys::mps_commit(self.raw, p, size) != 0
         }
     }
     /// Rserve a block of memory on an allocation point,

@@ -3,15 +3,36 @@ use arrayvec::ArrayVec;
 use mps_sys::*;
 use crate::format::ObjectFormat;
 use crate::arena::Arena;
-use std::mem::ManuallyDrop;
+use std::mem::{ManuallyDrop, MaybeUninit};
 use crate::MpsError;
 
 use super::{Pool, AutomaticPool};
+use std::ffi::c_void;
+
+/// Debug options for a [AutoMarkSweep] collector
+///
+/// See [debug docs](https://www.ravenbrook.com/project/mps/master/manual/html/topic/debugging.html#debugging-pools) for more info.
+pub struct DebugOptions {
+    /// The template to write a fencepost with.
+    ///
+    /// These are written before and after each allocated block.
+    pub fence_template: Option<&'static [u8]>,
+    /// The template to overwrite free code with.
+    pub free_template: Option<&'static [u8]>
+}
+impl Default for DebugOptions {
+    fn default() -> Self {
+        DebugOptions {
+            fence_template: Some(b"FENCE \xDE\xAD\xBE\xEF"),
+            free_template: Some(b"FREE \xCA\xFE\xBA\xBE")
+        }
+    }
+}
 
 /// Builds a [AutoMarkSweep] collector
 pub struct AutoMarkSweepBuilder<'a> {
-    raw_class: mps_pool_class_t,
     arena: &'a Arena,
+    debug: Option<DebugOptions>,
     allow_ambiguous: Option<bool>,
 }
 impl<'a> AutoMarkSweepBuilder<'a> {
@@ -25,21 +46,46 @@ impl<'a> AutoMarkSweepBuilder<'a> {
         self.allow_ambiguous = Some(b);
         self
     }
+    /// Switch to using the [debug pool](https://www.ravenbrook.com/project/mps/master/manual/html/topic/debugging.html#debugging-pools),
+    /// configuring it with the specified options
+    #[inline]
+    pub fn debug(&mut self, opts: Option<DebugOptions>) -> &mut Self {
+        self.debug = opts;
+        self
+    }
     /// Build the pool, using the specified
     /// object format to scan objects.
     pub fn build(&mut self, format: ObjectFormat<'a>) -> Result<AutoMarkSweep<'a>, MpsError> {
         unsafe {
-            let mut args = ArrayVec::<_, 3>::new();
+            let raw_class = match self.debug {
+                Some(_) => mps_sys::mps_class_ams_debug(),
+                None => mps_sys::mps_class_ams(),
+            };
+            let mut args = ArrayVec::<_, 4>::new();
             args.push(mps_kw_arg!(FORMAT => format.as_raw()));
             if let Some(ambiguous) = self.allow_ambiguous {
                 args.push(mps_kw_arg!(AMS_SUPPORT_AMBIGUOUS => ambiguous));
+            }
+            let mut debug_options: MaybeUninit<mps_pool_debug_option_s> = MaybeUninit::uninit();
+            if let Some(ref debug) = self.debug {
+                debug_options.as_mut_ptr().write(mps_pool_debug_option_s {
+                    free_template: debug.free_template
+                        .map(|s| s.as_ptr() as *const c_void)
+                        .unwrap_or(std::ptr::null()),
+                    free_size: debug.free_template.map_or(0, |s| s.len()),
+                    fence_template: debug.fence_template
+                        .map(|s| s.as_ptr() as *const c_void)
+                        .unwrap_or(std::ptr::null()),
+                    fence_size: debug.fence_template.map_or(0, |s| s.len())
+                });
+                args.push(mps_kw_arg!(POOL_DEBUG_OPTIONS => debug_options.as_mut_ptr()))
             }
             args.push(mps_sys::mps_args_end());
             let mut pool = std::ptr::null_mut();
             let format = ManuallyDrop::new(format);
             handle_mps_res!(mps_pool_create_k(
                 &mut pool, self.arena.as_raw(),
-                self.raw_class,
+                raw_class,
                 args.as_mut_ptr()
             ))?;
             assert!(!pool.is_null());
@@ -74,7 +120,7 @@ impl<'a> AutoMarkSweep<'a> {
     #[inline]
     pub fn builder(arena: &'a Arena) -> AutoMarkSweepBuilder<'a> {
         AutoMarkSweepBuilder {
-            raw_class: unsafe { mps_sys::mps_class_ams() },
+            debug: None,
             arena,
             allow_ambiguous: None
         }

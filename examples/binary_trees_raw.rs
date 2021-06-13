@@ -12,7 +12,7 @@ use mps::format::{RawFormatMethods, ScanState, ObjectFormat};
 use std::ffi::{c_void, CStr};
 use mps::arena::{VirtualMemoryArenaClass, Arena};
 use mps::pools::Pool;
-use mps::pools::mark_sweep::AutoMarkSweep;
+use mps::pools::mark_sweep::{AutoMarkSweep, DebugOptions};
 use mps::MpsError;
 use mps::alloc::AllocationPoint;
 use std::alloc::Layout;
@@ -153,7 +153,7 @@ impl PoolType {
     fn create<'a>(&self, arena: &'a Arena) -> Result<Box<dyn Pool<'a> + 'a>, MpsError> {
         let format = ObjectFormat::managed_with::<TreeObject>(arena)?;
         match *self {
-            PoolType::MarkSweep => Ok(Box::new(AutoMarkSweep::builder(arena).build(format)?))
+            PoolType::MarkSweep => Ok(Box::new(AutoMarkSweep::builder(arena).debug(Some(DebugOptions::default())).build(format)?))
         }
     }
 }

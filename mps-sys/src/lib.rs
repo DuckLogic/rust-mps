@@ -60,7 +60,8 @@ mps_arg_val_from!(
     mps_fmt_scan_t => fmt_scan,
     mps_fmt_skip_t => fmt_skip,
     mps_fmt_fwd_t => fmt_fwd,
-    mps_fmt_pad_t => fmt_pad
+    mps_fmt_pad_t => fmt_pad,
+    *mut mps_pool_debug_option_s => pool_debug_options
     // mps_fmt_class_t => fmt_class
 );
 
