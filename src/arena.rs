@@ -2,6 +2,8 @@
 use mps_sys::*;
 use arrayvec::ArrayVec;
 use crate::err::MpsError;
+use std::ffi::c_void;
+use std::marker::PhantomData;
 
 /// A MPS Arena, for allocating raw memory from the operating system
 ///
@@ -134,6 +136,20 @@ impl Arena {
         unsafe { mps_arena_collect(self.raw); }
     }
 
+    /// Registers the currently running thread with this arena.
+    ///
+    /// This is necessary before any use of garbage collected pools.
+    ///
+    /// Corresponds to C function [mps_thread_reg](https://www.ravenbrook.com/project/mps/master/manual/html/topic/thread.html#c.mps_thread_reg)
+    #[inline]
+    pub fn register_thread(&self) -> Result<MpsThread<'_>, MpsError> {
+        unsafe {
+            // TODO: Should this be unsafe?
+            let mut res: mps_thr_t = std::ptr::null_mut();
+            handle_mps_res!(::mps_sys::mps_thread_reg(&mut res, self.raw))?;
+            Ok(MpsThread { raw: res, arena: self })
+        }
+    }
 }
 impl Drop for Arena {
     fn drop(&mut self) {
@@ -236,3 +252,87 @@ impl VirtualMemoryArenaBuilder {
         }
     }
 }
+
+/// A garbage collection root that has been registered with the MPS
+///
+/// Dropping this structure unregisters the root.
+pub struct MpsRoot {
+    raw: mps_root_t
+}
+impl MpsRoot {
+    /// Retrieve the raw pointer to the root
+    #[inline]
+    pub fn as_raw(&self) -> mps_root_t {
+        self.raw
+    }
+}
+impl Drop for MpsRoot {
+    fn drop(&mut self) {
+        unsafe {
+            ::mps_sys::mps_root_destroy(self.raw)
+        }
+    }
+}
+
+/// A identifier for a [registered threads](https://www.ravenbrook.com/project/mps/master/manual/html/topic/thread.html#c.mps_thr_t).
+///
+/// Threads must be registered before they can use the MPS. That way, the MPS can suspend them
+/// if it needs to have exclusive access to their state.
+///
+/// A thread **MUST** be registered with an arena if it ever uses a pointer
+/// to a location in one of the arena's garbage collected pools. It is recomended that all threads
+/// be registered.
+///
+/// It is an error if a thread terminates while it is registered,
+/// this structure must be dropped to deregister it first.
+pub struct MpsThread<'arena> {
+    raw: mps_thr_t,
+    arena: &'arena Arena
+}
+impl<'arena> MpsThread<'arena> {
+    /// Retrieve the raw identifier of the thread
+    #[inline]
+    pub fn as_raw(&self) -> mps_thr_t {
+        self.raw
+    }
+    /// The arena that this thread is registered with.
+    #[inline]
+    pub fn arena(&self) -> &'arena Arena {
+        self.arena
+    }
+    /// Register a thread's references and stacks as an ambiguous set of roots.
+    ///
+    /// The `cold_addr` is the top stack address to start scanning.
+    ///
+    /// This is unsafe, because most other code will rely on roots correctly being traced,
+    /// although there is no way to logically guarentee that with the current interface.
+    ///
+    /// Corresponds to C function [mps_root_create_thread](https://www.ravenbrook.com/project/mps/master/manual/html/topic/root.html#c.mps_root_create_thread)
+    ///
+    /// ## Safety
+    /// - Undefined behavior if `cold_addr` doesn't point to the the top of the stack.
+    /// - You should register roots correctly, because most other code will rely on that
+    ///   to prevent use after free.
+    #[inline(always)]
+    pub unsafe fn register_roots(&self, cold_addr: *mut c_void) -> Result<MpsRoot, MpsError> {
+        let mut res: mps_root_t = std::ptr::null_mut();
+        handle_mps_res!(::mps_sys::mps_root_create_thread(
+            &mut res,
+            self.arena.raw,
+            self.raw,
+            cold_addr
+        ))?;
+        Ok(MpsRoot { raw: res })
+    }
+}
+/// This is used both as a marker and as a logical guard for registration.
+impl !Send for MpsThread<'_> {}
+impl !Sync for MpsThread<'_> {}
+impl Drop for MpsThread<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            ::mps_sys::mps_thread_dereg(self.raw)
+        }
+    }
+}
+

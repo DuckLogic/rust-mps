@@ -1,7 +1,9 @@
 //! Supported pools
-use mps_sys::{mps_pool_t};
+use mps_sys::{mps_pool_t, mps_ap_t};
 
 use crate::arena::Arena;
+use crate::alloc::AllocationPoint;
+use crate::MpsError;
 
 pub mod mark_sweep;
 
@@ -43,6 +45,17 @@ pub unsafe trait Pool<'arena> {
     #[inline]
     fn is_manual(&self) -> bool {
         !self.is_automatic()
+    }
+    /// Create an allocation point
+    ///
+    /// Corresponds to the C function [mps_ap_create_k](https://www.ravenbrook.com/project/mps/master/manual/html/topic/allocation.html#c.mps_ap_create_k)
+    #[inline]
+    fn create_allocation_point(&self) -> Result<AllocationPoint, MpsError> {
+        unsafe {
+            let mut res: mps_ap_t = std::ptr::null_mut();
+            handle_mps_res!(::mps_sys::mps_ap_create_k(&mut res, self.as_raw(), mps_sys::mps_args_none.as_mut_ptr()))?;
+            Ok(AllocationPoint::from_raw(res))
+        }
     }
 }
 

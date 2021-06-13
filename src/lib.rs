@@ -10,6 +10,7 @@
 )]
 #![feature(
     concat_idents, // Used for mps_kw_arg
+    negative_impls, // `!Sync` is cleaner than PhantomData
 )]
 //! Moderately high-level bindings to the [Memory Pool System](https://www.ravenbrook.com/project/mps/).\
 //!

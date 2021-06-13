@@ -33,15 +33,10 @@ impl<'a> ObjectFormat<'a> {
     /// The minimum alignment of an object is optionally given by `object_align`
     pub fn managed_with<M>(
         arena: &'a Arena,
-        object_align: Option<usize>
-    ) -> Result<ObjectFormat, MpsError>
+    ) -> Result<ObjectFormat<'a>, MpsError>
         where M: RawFormatMethods {
         let mut args: ArrayVec<_, 8> = ArrayVec::new();
         unsafe {
-            if let Some(align) = object_align {
-                assert!(align > 0 && align.is_power_of_two());
-                args.push(mps_kw_arg!(FMT_ALIGN => align));
-            }
             // TODO: HEADER_SIZE?
             args.extend(mps_kw_args!(
                 FMT_ALIGN => M::ALIGNMENT,
@@ -254,7 +249,7 @@ impl ScanFixState {
     ///
     /// This corresponds to the C macro [`MPS_FIX2`](https://www.ravenbrook.com/project/mps/master/manual/html/topic/scanning.html#c.MPS_FIX2)
     #[inline(always)]
-    pub unsafe fn fix<T>(&mut self, addr: &mut *mut T) -> Result<(), mps_res_t> {
+    pub unsafe fn force_fix<T>(&mut self, addr: &mut *mut T) -> Result<(), mps_res_t> {
         let res = ::mps_sys::_mps_fix2(self.state.raw, addr as *mut *mut T as *mut *mut c_void);
         if res == 0 {
             Ok(())
@@ -271,9 +266,9 @@ impl ScanFixState {
     /// This is a combination of `should_fix` and `fix`.
     /// It corresponds to the C macro [`MPS_FIX12`](https://www.ravenbrook.com/project/mps/master/manual/html/topic/scanning.html#c.MPS_FIX12)
     #[inline(always)]
-    pub unsafe fn try_fix<T>(&mut self, addr: &mut *mut T) -> Result<(), mps_res_t> {
+    pub unsafe fn fix<T>(&mut self, addr: &mut *mut T) -> Result<(), mps_res_t> {
         if self.should_fix(addr) {
-            self.fix(addr)
+            self.force_fix(addr)
         } else {
             Ok(())
         }

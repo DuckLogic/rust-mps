@@ -20,7 +20,10 @@ thiserror = "^1"
 
 [workspace]
 
-
 [profile.dev.build-override]
-# We need optimizations to make bindgen run fast
+# We need some optimizations to make bindgen run fast
 opt-level = 3
+
+[dev-dependencies]
+slog = "2.7"
+slog-term = "2.8"

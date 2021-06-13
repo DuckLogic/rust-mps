@@ -57,7 +57,7 @@
 //!         // Initialize
 //!         (*res).val = 5;
 //!         if ap.commit(res as mps_addr_t, layout.size()) {
-//!             // Successfull allocation
+//!             // Successful allocation
 //!             obj = res;
 //!             break;
 //!         }
@@ -69,6 +69,8 @@
 use mps_sys::{mps_ap_t, mps_addr_t};
 
 use crate::err::MpsError;
+use std::alloc::Layout;
+use std::ffi::c_void;
 
 /// An allocation point.
 ///
@@ -79,6 +81,11 @@ use crate::err::MpsError;
 pub struct AllocationPoint {
     raw: mps_ap_t
 }
+/// An allocation point is not thread safe.
+///
+/// Each thread must create its own allocation point or points.
+impl !Send for AllocationPoint {}
+impl !Sync for AllocationPoint {}
 impl AllocationPoint {
     /// Create an allocation point from the specified raw pointer.
     ///
@@ -93,6 +100,24 @@ impl AllocationPoint {
     #[inline(always)]
     pub const fn as_raw(&self) -> mps_ap_t {
         self.raw
+    }
+    /// Allocate a block of memory of the specified size, initializing it with the specified closure
+    ///
+    /// This functions as essentially a loop [AllocationPoint::reserve] + [AllocationPoint::commit]
+    ///
+    /// ## Safety
+    /// - Once initialized, the memory must be able to be properly traced.
+    /// - The size/alignment of the specified type must meet the requirements of the type
+    #[inline]
+    pub unsafe fn alloc_with<T, F: FnMut(*mut T)>(&self, mut func: F) -> Result<*mut T, MpsError> {
+        let layout = Layout::new::<T>();
+        loop {
+            let ptr = self.reserve(layout.size())? as *mut T;
+            func(ptr);
+            if self.commit(ptr as *mut c_void, layout.size()) {
+                return Ok(ptr)
+            }
+        }
     }
     /// Reserve a block of memory from this allocation point.
     ///
@@ -129,7 +154,7 @@ impl AllocationPoint {
             (*self.raw).alloc = next;
             Ok((*self.raw).init)
         } else {
-            self.fill(size)
+            self._fill(size)
         }
     }
     /// Commit a previously reserved block on an allocation point.
@@ -153,7 +178,7 @@ impl AllocationPoint {
         if !(*self.raw).limit.is_null() {
             true
         } else {
-            self.trip(p, size)
+            self._trip(p, size)
         }
     }
     /// Rserve a block of memory on an allocation point,
@@ -162,7 +187,7 @@ impl AllocationPoint {
     /// Corresponds to C function [mps_ap_fill](https://www.ravenbrook.com/project/mps/master/manual/html/topic/allocation.html#c.mps_ap_fill)
     #[cold]
     #[inline(always)]
-    unsafe fn fill(&self, size: usize) -> Result<mps_addr_t, MpsError> {
+    unsafe fn _fill(&self, size: usize) -> Result<mps_addr_t, MpsError> {
         let mut res: mps_addr_t = std::ptr::null_mut();
         match ::mps_sys::mps_ap_fill(&mut res, self.raw, size) {
             0 => Ok(res),
@@ -174,7 +199,12 @@ impl AllocationPoint {
     /// Corresponds to C function [mps_ap_trip](https://www.ravenbrook.com/project/mps/master/manual/html/topic/allocation.html#c.mps_ap_trip)
     #[inline(always)]
     #[cold]
-    unsafe fn trip(&self, ptr: mps_addr_t, size: usize) -> bool {
+    unsafe fn _trip(&self, ptr: mps_addr_t, size: usize) -> bool {
         ::mps_sys::mps_ap_trip(self.raw, ptr, size) != 0
+    }
+}
+impl Drop for AllocationPoint {
+    fn drop(&mut self) {
+        unsafe { ::mps_sys::mps_ap_destroy(self.raw); }
     }
 }

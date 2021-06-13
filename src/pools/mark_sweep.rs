@@ -102,10 +102,10 @@ unsafe impl<'a> Send for AutoMarkSweep<'a> {}
 unsafe impl<'a> Sync for AutoMarkSweep<'a> {}
 impl<'a> Drop for AutoMarkSweep<'a> {
     fn drop(&mut self) {
-        // NOTE: Drop pool after format
+        // NOTE: Drop pool *before* format
         unsafe {
-            ManuallyDrop::drop(&mut self.format);
             mps_pool_destroy(self.raw);
+            ManuallyDrop::drop(&mut self.format);
         }
     }
 }
