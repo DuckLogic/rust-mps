@@ -1,11 +1,9 @@
 #![feature(
 arbitrary_self_types, // Unfortunately this is required for methods on Gc refs
 )]
-//! An implementation of the [binary trees benchmark](https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/binarytrees.html#binarytrees)
-//! that uses very low-level bindings to the MPS.
+//! Implementation of the binary trees benchmark, using a low level binding to the MPS.
 //!
-//! This doesn't make use of any of the abstractions in zerogc. It should be equivalent
-//! to C level usage of the MPS.
+//! See [BinaryTrees] for more information.
 use slog::{Logger, Drain, o};
 use std::cell::Cell;
 use mps::format::{RawFormatMethods, ScanState, ObjectFormat};
@@ -16,6 +14,9 @@ use mps::pools::mark_sweep::{AutoMarkSweep};
 use mps::MpsError;
 use mps::alloc::AllocationPoint;
 use std::alloc::Layout;
+
+use argh::FromArgs;
+use std::str::FromStr;
 
 #[repr(C)]
 struct Tree<'gc> {
@@ -149,22 +150,67 @@ fn inner(
     Ok(format!("{}\t trees of depth {}\t check: {}", iterations, depth, chk))
 }
 
+#[derive(Debug, Copy, Clone)]
 enum PoolType {
     MarkSweep,
+    MostlyCopying
+}
+impl FromStr for PoolType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match &*s.to_ascii_lowercase().replace('_', "-") {
+            "ams" | "automatic-mark-sweep" | "mark-sweep" => PoolType::MarkSweep,
+            "amc" | "automatic-mostly-copying" | "mostly-copying" => PoolType::MostlyCopying,
+            _ => return Err(format!("Invalid pool type: {}", s))
+        })
+    }
 }
 impl PoolType {
     fn create<'a>(&self, arena: &'a Arena) -> Result<Box<dyn Pool<'a> + 'a>, MpsError> {
         let format = ObjectFormat::managed_with::<TreeObject>(arena)?;
         match *self {
-            PoolType::MarkSweep => Ok(Box::new(AutoMarkSweep::builder(arena).build(format)?))
+            PoolType::MarkSweep => Ok(Box::new(AutoMarkSweep::builder(arena).build(format)?)),
+            PoolType::MostlyCopying => todo!()
         }
     }
 }
+impl Default for PoolType {
+    fn default() -> PoolType {
+        PoolType::MarkSweep // This is the simplest
+    }
+}
+
+/// An implementation of the binary trees benchmark
+/// that uses very low-level bindings to the MPS.
+///
+/// See the relevant page at the computer language benchmarks game for more information:
+/// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/binarytrees.html#binarytrees
+///
+/// This doesn't make use of any of the abstractions in zerogc. It should be equivalent
+/// to C level usage of the MPS.
+#[derive(argh::FromArgs)]
+pub struct BinaryTrees {
+    /// the depth of the trees to generate
+    #[argh(positional, default = "10")]
+    n: u32,
+    /// the MPS pool type to use for garbage collection.
+    ///
+    /// Available pool types (default "mark-sweep):
+    /// 1. "mark-sweep" (or "AMS") - A simple mark sweep garbage collector
+    ///    - https://www.ravenbrook.com/project/mps/master/manual/html/pool/ams.html#pool-ams
+    ///    - This is the default for simplicity
+    /// 2. "mostly-copying" (or "AMC") - A fast, generational garbage collector
+    ///    - This is the primary pool class intended for production use
+    ///    - https://www.ravenbrook.com/project/mps/master/manual/html/pool/amc.html#pool-amc
+    #[argh(option, default = "Default::default()")]
+    pool_type: PoolType
+}
+
 fn main() {
-    let n = std::env::args().nth(1)
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(10);
-    let pool_type = PoolType::MarkSweep; // TODO: Configure more than one pool type
+    let args = ::argh::from_env::<BinaryTrees>();
+    let n = args.n as i32;
+    let pool_type = args.pool_type;
     let min_depth = 4;
     let max_depth = if min_depth + 2 > n { min_depth + 2 } else { n };
 
@@ -179,7 +225,7 @@ fn main() {
         builder.build().expect("Failed to build MPS arena")
     };
     let thread = arena.register_thread().unwrap();
-    let root = unsafe { thread.register_roots(&pool_type as *const PoolType as *mut c_void).unwrap() };
+    let root = unsafe { thread.register_roots(&args as *const _ as *mut c_void).unwrap() };
     let pool = pool_type.create(&arena).unwrap();
     let allocation_point = pool.create_allocation_point().unwrap();
     let gc = RawMpsCollector {
