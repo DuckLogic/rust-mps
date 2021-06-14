@@ -13,7 +13,7 @@ and is separate from the MPS itself.
 
 rust-mps License
 ----------------
-Copyright (c) 2020 Nicholas Schlabach
+Copyright (c) 2021 Nicholas Schlabach
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
