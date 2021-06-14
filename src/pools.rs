@@ -6,6 +6,7 @@ use crate::alloc::AllocationPoint;
 use crate::MpsError;
 
 pub mod mark_sweep;
+pub mod automatic_mostly_copying;
 
 /// A pool of memory managed by the Memory Pool System
 ///

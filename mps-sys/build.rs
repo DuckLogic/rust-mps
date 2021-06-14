@@ -19,6 +19,7 @@ fn main() {
         .header("mps/code/mps.h")
         .header("mps/code/mpsavm.h") // VM arena
         .header("mps/code/mpscams.h") // Pool: Automatic Mark/Sweep
+        .header("mps/code/mpscamc.h") // Pool: Automatic Mostly Copying
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .allowlist_type("mps_.*")
         .allowlist_function("mps_.*")

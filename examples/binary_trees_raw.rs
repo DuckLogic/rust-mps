@@ -17,6 +17,7 @@ use std::alloc::Layout;
 
 use argh::FromArgs;
 use std::str::FromStr;
+use mps::pools::automatic_mostly_copying::AutoMostlyCopyingPool;
 
 #[repr(C)]
 struct Tree<'gc> {
@@ -171,7 +172,7 @@ impl PoolType {
         let format = ObjectFormat::managed_with::<TreeObject>(arena)?;
         match *self {
             PoolType::MarkSweep => Ok(Box::new(AutoMarkSweep::builder(arena).build(format)?)),
-            PoolType::MostlyCopying => todo!()
+            PoolType::MostlyCopying => Ok(Box::new(AutoMostlyCopyingPool::builder(arena).build(format)?))
         }
     }
 }
